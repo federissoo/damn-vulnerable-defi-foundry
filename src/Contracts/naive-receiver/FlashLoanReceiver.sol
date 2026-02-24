@@ -1,43 +1,44 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.17;
+// Damn Vulnerable DeFi v4 (https://damnvulnerabledefi.xyz)
+pragma solidity =0.8.25;
 
-import {Address} from "openzeppelin-contracts/utils/Address.sol";
+import {IERC3156FlashBorrower} from "@openzeppelin/contracts/interfaces/IERC3156FlashBorrower.sol";
+import {WETH, NaiveReceiverPool} from "./NaiveReceiverPool.sol";
 
-/**
- * @title FlashLoanReceiver
- * @author Damn Vulnerable DeFi (https://damnvulnerabledefi.xyz)
- */
-contract FlashLoanReceiver {
-    using Address for address payable;
+contract FlashLoanReceiver is IERC3156FlashBorrower {
+    address private pool;
 
-    address payable private pool;
-
-    error SenderMustBePool();
-    error CannotBorrowThatMuch();
-
-    constructor(address payable poolAddress) {
-        pool = poolAddress;
+    constructor(address _pool) {
+        pool = _pool;
     }
 
-    // Function called by the pool during flash loan
-    function receiveEther(uint256 fee) public payable {
-        if (msg.sender != pool) revert SenderMustBePool();
+    function onFlashLoan(address, address token, uint256 amount, uint256 fee, bytes calldata)
+        external
+        returns (bytes32)
+    {
+        assembly {
+            // gas savings
+            if iszero(eq(sload(pool.slot), caller())) {
+                mstore(0x00, 0x48f5c3ed)
+                revert(0x1c, 0x04)
+            }
+        }
 
-        uint256 amountToBeRepaid = msg.value + fee;
+        if (token != address(NaiveReceiverPool(pool).weth())) revert NaiveReceiverPool.UnsupportedCurrency();
 
-        if (address(this).balance < amountToBeRepaid) {
-            revert CannotBorrowThatMuch();
+        uint256 amountToBeRepaid;
+        unchecked {
+            amountToBeRepaid = amount + fee;
         }
 
         _executeActionDuringFlashLoan();
 
         // Return funds to pool
-        pool.sendValue(amountToBeRepaid);
+        WETH(payable(token)).approve(pool, amountToBeRepaid);
+
+        return keccak256("ERC3156FlashBorrower.onFlashLoan");
     }
 
-    // Internal function where the funds received are used
+    // Internal function where the funds received would be used
     function _executeActionDuringFlashLoan() internal {}
-
-    // Allow deposits of ETH
-    receive() external payable {}
 }
